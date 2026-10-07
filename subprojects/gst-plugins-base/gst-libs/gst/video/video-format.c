@@ -5636,6 +5636,77 @@ pack_NV16_10LE32 (const GstVideoFormatInfo * info, GstVideoPackFlags flags,
   }
 }
 
+/* NV24 with 10-bit components packed three per little endian 32-bit word
+ * (bits 31:30 zero); the chroma plane is the Cb, Cr sequence packed the same
+ * way. */
+#define PACK_NV24_10LE32 GST_VIDEO_FORMAT_AYUV64, unpack_NV24_10LE32, 1, pack_NV24_10LE32
+static void
+unpack_NV24_10LE32 (const GstVideoFormatInfo * info, GstVideoPackFlags flags,
+    gpointer dest, const gpointer data[GST_VIDEO_MAX_PLANES],
+    const gint stride[GST_VIDEO_MAX_PLANES], gint x, gint y, gint width)
+{
+  gint i;
+  const guint32 *restrict sy = GET_PLANE_LINE (0, y);
+  const guint32 *restrict suv = GET_PLANE_LINE (1, y);
+  guint16 *restrict d = dest;
+
+  for (i = 0; i < width; i++) {
+    guint p = x + i, c = 2 * p;
+    guint16 Yn, Un, Vn;
+
+    Yn = ((GST_READ_UINT32_LE (sy + p / 3) >> (10 * (p % 3))) & 0x3ff) << 6;
+    Un = ((GST_READ_UINT32_LE (suv + c / 3) >> (10 * (c % 3))) & 0x3ff) << 6;
+    c++;
+    Vn = ((GST_READ_UINT32_LE (suv + c / 3) >> (10 * (c % 3))) & 0x3ff) << 6;
+
+    if (!(flags & GST_VIDEO_PACK_FLAG_TRUNCATE_RANGE)) {
+      Yn |= Yn >> 10;
+      Un |= Un >> 10;
+      Vn |= Vn >> 10;
+    }
+
+    d[i * 4 + 0] = 0xffff;
+    d[i * 4 + 1] = Yn;
+    d[i * 4 + 2] = Un;
+    d[i * 4 + 3] = Vn;
+  }
+}
+
+static void
+pack_NV24_10LE32 (const GstVideoFormatInfo * info, GstVideoPackFlags flags,
+    const gpointer src, gint sstride, gpointer data[GST_VIDEO_MAX_PLANES],
+    const gint stride[GST_VIDEO_MAX_PLANES], GstVideoChromaSite chroma_site,
+    gint y, gint width)
+{
+  gint i;
+  guint32 *restrict dy = GET_PLANE_LINE (0, y);
+  guint32 *restrict duv = GET_PLANE_LINE (1, y);
+  const guint16 *restrict s = src;
+  guint32 Y = 0, UV = 0;
+
+  for (i = 0; i < width; i++) {
+    guint c = 2 * i;
+
+    Y |= (guint32) (s[i * 4 + 1] >> 6) << (10 * (i % 3));
+    if (i % 3 == 2 || i == width - 1) {
+      GST_WRITE_UINT32_LE (dy + i / 3, Y);
+      Y = 0;
+    }
+
+    UV |= (guint32) (s[i * 4 + 2] >> 6) << (10 * (c % 3));
+    if (c % 3 == 2) {
+      GST_WRITE_UINT32_LE (duv + c / 3, UV);
+      UV = 0;
+    }
+    c++;
+    UV |= (guint32) (s[i * 4 + 3] >> 6) << (10 * (c % 3));
+    if (c % 3 == 2 || i == width - 1) {
+      GST_WRITE_UINT32_LE (duv + c / 3, UV);
+      UV = 0;
+    }
+  }
+}
+
 #define PACK_NV16_10LE40 GST_VIDEO_FORMAT_AYUV64, unpack_NV16_10LE40, 1, pack_NV16_10LE40
 static void
 unpack_NV16_10LE40 (const GstVideoFormatInfo * info, GstVideoPackFlags flags,
@@ -8403,6 +8474,8 @@ static const VideoFormat formats[] = {
       PSTR244, PLANE011, OFFS001, SUB444, PACK_P410_10LE),
   MAKE_YUV_LE_FORMAT (P412_LE, "raw video", 0x00000000, DPTH12_12_12_HI,
       PSTR244, PLANE011, OFFS001, SUB444, PACK_P412_LE),
+  MAKE_YUV_C_LE_FORMAT (NV24_10LE32, "raw video", 0x00000000, DPTH10_10_10,
+      PSTR0, PLANE011, OFFS001, SUB444, PACK_NV24_10LE32),
 };
 
 G_GNUC_END_IGNORE_DEPRECATIONS;
