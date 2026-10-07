@@ -995,6 +995,7 @@ gst_v4l2_codec_h265_dec_fill_ext_sps_rps (GstV4l2CodecH265Dec * self,
   for (i = 0; i < sps->num_short_term_ref_pic_sets; i++) {
     ext_sps_st_rps_set = &g_array_index (self->ext_sps_st_rps,
         struct v4l2_ctrl_hevc_ext_sps_st_rps, i);
+    memset (ext_sps_st_rps_set, 0, sizeof (*ext_sps_st_rps_set));
 
     ext_sps_st_rps_set->flags |=
         sps->short_term_ref_pic_set[i].inter_ref_pic_set_prediction_flag ?
@@ -1258,10 +1259,27 @@ gst_v4l2_codec_h265_dec_start_picture (GstH265Decoder * decoder,
     return GST_FLOW_ERROR;
 
   /* The base class will only emit new_sequence for allocation related changes
-   * in the SPS, make sure to keep the SPS upt-to-date */
-  if (slice->header.pps->sps->id != self->sps.seq_parameter_set_id) {
+   * in the SPS, and a stream may resend an SPS id with other content (e.g. the
+   * range extension flags), make sure to keep the SPS up-to-date */
+  {
+    struct v4l2_ctrl_hevc_sps prev_sps = self->sps;
+    GArray *prev_st_rps = g_array_copy (self->ext_sps_st_rps);
+    GArray *prev_lt_rps = g_array_copy (self->ext_sps_lt_rps);
+    gboolean need_sequence = self->need_sequence;
+
     gst_v4l2_codec_h265_dec_fill_sequence (self, slice->header.pps->sps);
     gst_v4l2_codec_h265_dec_fill_ext_sps_rps (self, slice->header.pps->sps);
+
+    if (!need_sequence
+        && memcmp (&prev_sps, &self->sps, sizeof (prev_sps)) == 0
+        && memcmp (prev_st_rps->data, self->ext_sps_st_rps->data,
+            g_array_get_element_size (prev_st_rps) * prev_st_rps->len) == 0
+        && memcmp (prev_lt_rps->data, self->ext_sps_lt_rps->data,
+            g_array_get_element_size (prev_lt_rps) * prev_lt_rps->len) == 0)
+      self->need_sequence = FALSE;
+
+    g_array_unref (prev_st_rps);
+    g_array_unref (prev_lt_rps);
   }
 
   gst_v4l2_codec_h265_dec_fill_pps (self, slice->header.pps);
