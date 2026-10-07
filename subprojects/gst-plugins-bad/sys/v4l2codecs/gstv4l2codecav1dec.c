@@ -332,6 +332,10 @@ gst_v4l2_codec_av1_dec_negotiate (GstVideoDecoder * decoder)
     return FALSE;
   }
 
+  gst_v4l2_decoder_set_frame_rate (self->decoder,
+      GST_VIDEO_INFO_FPS_N (&av1dec->input_state->info),
+      GST_VIDEO_INFO_FPS_D (&av1dec->input_state->info));
+
   if (!gst_v4l2_decoder_set_controls (self->decoder, NULL, control,
           G_N_ELEMENTS (control))) {
     GST_ELEMENT_ERROR (decoder, RESOURCE, WRITE,
@@ -1507,6 +1511,10 @@ gst_v4l2_codec_av1_dec_output_picture (GstAV1Decoder * decoder,
           (NULL));
       goto error;
     }
+
+    if (gst_v4l2_request_corrupted (request))
+      GST_VIDEO_CODEC_FRAME_FLAG_SET (frame,
+          GST_VIDEO_CODEC_FRAME_FLAG_CORRUPTED);
 
     /* Hold on reference buffers for the rest of the picture lifetime */
     gst_av1_picture_set_user_data (picture,

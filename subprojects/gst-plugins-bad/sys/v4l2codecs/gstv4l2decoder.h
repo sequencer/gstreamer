@@ -62,6 +62,9 @@ gboolean          gst_v4l2_decoder_flush (GstV4l2Decoder * self);
 gboolean          gst_v4l2_decoder_enum_sink_fmt (GstV4l2Decoder * self,
                                                   gint i, guint32 * out_fmt);
 
+void              gst_v4l2_decoder_set_frame_rate (GstV4l2Decoder * self,
+                                                   gint fps_n, gint fps_d);
+
 gboolean          gst_v4l2_decoder_set_sink_fmt (GstV4l2Decoder * self, guint32 fmt,
                                                  gint width, gint height,
                                                  gint pixel_bitdepth);
@@ -165,6 +168,8 @@ gint              gst_v4l2_request_poll (GstV4l2Request * request,
 gint              gst_v4l2_request_set_done (GstV4l2Request * request);
 
 gboolean          gst_v4l2_request_failed (GstV4l2Request * request);
+
+gboolean          gst_v4l2_request_corrupted (GstV4l2Request * request);
 
 GstBuffer *       gst_v4l2_request_dup_pic_buf (GstV4l2Request * request);
 

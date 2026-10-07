@@ -71,6 +71,7 @@ struct _GstV4l2Request
   /* request state */
   gboolean pending;
   gboolean failed;
+  gboolean corrupted;
   gboolean hold_pic_buf;
   gboolean sub_request;
 };
@@ -365,6 +366,24 @@ gst_v4l2_decoder_enum_sink_fmt (GstV4l2Decoder * self, gint i,
   *out_fmt = fmtdesc.pixelformat;
 
   return TRUE;
+}
+
+void
+gst_v4l2_decoder_set_frame_rate (GstV4l2Decoder * self, gint fps_n, gint fps_d)
+{
+  struct v4l2_streamparm parm = {
+    .type = self->sink_buf_type,
+  };
+
+  if (fps_n <= 0 || fps_d <= 0)
+    return;
+
+  /* The OUTPUT frame interval lets drivers size their clocks for the
+   * stream; drivers without it return ENOTTY. */
+  parm.parm.output.timeperframe.numerator = fps_d;
+  parm.parm.output.timeperframe.denominator = fps_n;
+  if (ioctl (self->video_fd, VIDIOC_S_PARM, &parm) < 0)
+    GST_DEBUG_OBJECT (self, "VIDIOC_S_PARM failed: %s", g_strerror (errno));
 }
 
 gboolean
@@ -1008,7 +1027,8 @@ gst_v4l2_decoder_dequeue_sink (GstV4l2Decoder * self)
 }
 
 static gboolean
-gst_v4l2_decoder_dequeue_src (GstV4l2Decoder * self, guint32 * out_frame_num)
+gst_v4l2_decoder_dequeue_src (GstV4l2Decoder * self, guint32 * out_frame_num,
+    guint32 * out_flags)
 {
   gint ret;
   struct v4l2_plane planes[GST_VIDEO_MAX_PLANES] = { {0} };
@@ -1029,6 +1049,7 @@ gst_v4l2_decoder_dequeue_src (GstV4l2Decoder * self, guint32 * out_frame_num)
   }
 
   *out_frame_num = buf.timestamp.tv_usec + buf.timestamp.tv_sec * 1000000;
+  *out_flags = buf.flags;
 
   GST_TRACE_OBJECT (self, "Dequeued picture buffer %i", buf.index);
 
@@ -1526,10 +1547,19 @@ gst_v4l2_request_set_done (GstV4l2Request * request)
 
     if (!pending_req->hold_pic_buf) {
       guint32 frame_num = G_MAXUINT32;
+      guint32 buf_flags = 0;
 
-      if (!gst_v4l2_decoder_dequeue_src (decoder, &frame_num)) {
+      if (!gst_v4l2_decoder_dequeue_src (decoder, &frame_num, &buf_flags)) {
         pending_req->failed = TRUE;
-      } else if (frame_num != pending_req->frame_num) {
+      } else if (buf_flags & V4L2_BUF_FLAG_ERROR) {
+        /* The driver finished the picture, but the bitstream or the
+         * hardware reported an error: the content is not reliable. */
+        GST_WARNING_OBJECT (decoder, "Frame %u decoded with errors.",
+            frame_num);
+        pending_req->corrupted = TRUE;
+      }
+
+      if (!pending_req->failed && frame_num != pending_req->frame_num) {
         GST_WARNING_OBJECT (decoder,
             "Requested frame %u, but driver returned frame %u.",
             pending_req->frame_num, frame_num);
@@ -1554,6 +1584,12 @@ gboolean
 gst_v4l2_request_failed (GstV4l2Request * request)
 {
   return request->failed;
+}
+
+gboolean
+gst_v4l2_request_corrupted (GstV4l2Request * request)
+{
+  return request->corrupted;
 }
 
 GstBuffer *
