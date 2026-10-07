@@ -115,6 +115,7 @@ struct _GstV4l2CodecH265Dec
 
   struct v4l2_ctrl_hevc_sps sps;
   struct v4l2_ctrl_hevc_pps pps;
+  struct v4l2_ctrl_hevc_ext_pps_range pps_range;
   struct v4l2_ctrl_hevc_scaling_matrix scaling_matrix;
   struct v4l2_ctrl_hevc_decode_params decode_params;
   GArray *ext_sps_st_rps;
@@ -132,6 +133,7 @@ struct _GstV4l2CodecH265Dec
   gboolean support_slice_parameters;
   gboolean support_entry_point_offsets;
   gboolean support_long_short_term_rps;
+  gboolean support_pps_range;
 
   GstVideoConverter *convert;
   gboolean need_crop;
@@ -206,6 +208,10 @@ gst_v4l2_decoder_h265_api_check (GstV4l2Decoder * decoder)
     }, {
       SET_ID (V4L2_CID_STATELESS_HEVC_EXT_SPS_LT_RPS),
       .size = sizeof(struct v4l2_ctrl_hevc_ext_sps_lt_rps),
+      .optional = TRUE,
+    }, {
+      SET_ID (V4L2_CID_STATELESS_HEVC_EXT_PPS_RANGE),
+      .size = sizeof(struct v4l2_ctrl_hevc_ext_pps_range),
       .optional = TRUE,
     }
   };
@@ -302,6 +308,10 @@ gst_v4l2_codec_h265_dec_open (GstVideoDecoder * decoder)
   self->support_long_short_term_rps =
       gst_v4l2_decoder_get_controls (self->decoder, long_short_term_rps,
       G_N_ELEMENTS (long_short_term_rps));
+
+  self->support_pps_range =
+      gst_v4l2_decoder_query_control_size (self->decoder,
+      V4L2_CID_STATELESS_HEVC_EXT_PPS_RANGE, NULL);
 
   self->decode_mode = control[0].value;
   self->start_code = control[1].value;
@@ -638,6 +648,20 @@ gst_v4l2_codec_h265_dec_fill_sequence (GstV4l2CodecH265Dec * self,
             (sps->strong_intra_smoothing_enabled_flag ? V4L2_HEVC_SPS_FLAG_STRONG_INTRA_SMOOTHING_ENABLED : 0),
   };
   /* *INDENT-ON* */
+  if (sps->sps_range_extension_flag) {
+    const GstH265SPSExtensionParams *ext = &sps->sps_extension_params;
+
+    self->sps.flags |=
+        (ext->transform_skip_rotation_enabled_flag ? V4L2_HEVC_SPS_FLAG_TRANSFORM_SKIP_ROTATION_ENABLED : 0) |
+        (ext->transform_skip_context_enabled_flag ? V4L2_HEVC_SPS_FLAG_TRANSFORM_SKIP_CONTEXT_ENABLED : 0) |
+        (ext->implicit_rdpcm_enabled_flag ? V4L2_HEVC_SPS_FLAG_IMPLICIT_RDPCM_ENABLED : 0) |
+        (ext->explicit_rdpcm_enabled_flag ? V4L2_HEVC_SPS_FLAG_EXPLICIT_RDPCM_ENABLED : 0) |
+        (ext->extended_precision_processing_flag ? V4L2_HEVC_SPS_FLAG_EXTENDED_PRECISION_PROCESSING : 0) |
+        (ext->intra_smoothing_disabled_flag ? V4L2_HEVC_SPS_FLAG_INTRA_SMOOTHING_DISABLED : 0) |
+        (ext->high_precision_offsets_enabled_flag ? V4L2_HEVC_SPS_FLAG_HIGH_PRECISION_OFFSETS_ENABLED : 0) |
+        (ext->persistent_rice_adaptation_enabled_flag ? V4L2_HEVC_SPS_FLAG_PERSISTENT_RICE_ADAPTATION_ENABLED : 0) |
+        (ext->cabac_bypass_alignment_enabled_flag ? V4L2_HEVC_SPS_FLAG_CABAC_BYPASS_ALIGNMENT_ENABLED : 0);
+  }
   if (sps->pcm_enabled_flag) {
     self->sps.pcm_sample_bit_depth_luma_minus1 =
         sps->pcm_sample_bit_depth_luma_minus1;
@@ -706,6 +730,32 @@ gst_v4l2_codec_h265_dec_fill_pps (GstV4l2CodecH265Dec * self, GstH265PPS * pps)
       self->pps.column_width_minus1[i] = pps->column_width_minus1[i];
     for (i = 0; i <= pps->num_tile_rows_minus1; i++)
       self->pps.row_height_minus1[i] = pps->row_height_minus1[i];
+  }
+
+  memset (&self->pps_range, 0, sizeof (self->pps_range));
+  if (pps->pps_range_extension_flag) {
+    const GstH265PPSExtensionParams *ext = &pps->pps_extension_params;
+
+    self->pps_range.log2_max_transform_skip_block_size_minus2 =
+        ext->log2_max_transform_skip_block_size_minus2;
+    self->pps_range.log2_sao_offset_scale_luma =
+        ext->log2_sao_offset_scale_luma;
+    self->pps_range.log2_sao_offset_scale_chroma =
+        ext->log2_sao_offset_scale_chroma;
+    self->pps_range.flags = ext->cross_component_prediction_enabled_flag ?
+        V4L2_HEVC_EXT_PPS_RANGE_FLAG_CROSS_COMPONENT_PREDICTION_ENABLED : 0;
+    if (ext->chroma_qp_offset_list_enabled_flag) {
+      self->pps_range.flags |=
+          V4L2_HEVC_EXT_PPS_RANGE_FLAG_CHROMA_QP_OFFSET_LIST_ENABLED;
+      self->pps_range.diff_cu_chroma_qp_offset_depth =
+          ext->diff_cu_chroma_qp_offset_depth;
+      self->pps_range.chroma_qp_offset_list_len_minus1 =
+          ext->chroma_qp_offset_list_len_minus1;
+      for (i = 0; i <= ext->chroma_qp_offset_list_len_minus1; i++) {
+        self->pps_range.cb_qp_offset_list[i] = ext->cb_qp_offset_list[i];
+        self->pps_range.cr_qp_offset_list[i] = ext->cr_qp_offset_list[i];
+      }
+    }
   }
 }
 
@@ -833,7 +883,9 @@ gst_v4l2_codec_h265_dec_fill_slice_params (GstV4l2CodecH265Dec * self,
         (slice_hdr->loop_filter_across_slices_enabled_flag ?
              V4L2_HEVC_SLICE_PARAMS_FLAG_SLICE_LOOP_FILTER_ACROSS_SLICES_ENABLED : 0) |
         (slice_hdr->dependent_slice_segment_flag ?
-             V4L2_HEVC_SLICE_PARAMS_FLAG_DEPENDENT_SLICE_SEGMENT : 0),
+             V4L2_HEVC_SLICE_PARAMS_FLAG_DEPENDENT_SLICE_SEGMENT : 0) |
+        (slice_hdr->cu_chroma_qp_offset_enabled_flag ?
+             V4L2_HEVC_SLICE_PARAMS_FLAG_CU_CHROMA_QP_OFFSET_ENABLED : 0),
   };
   /* *INDENT-ON* */
 
@@ -1466,6 +1518,7 @@ gst_v4l2_codec_h265_dec_submit_bitstream (GstV4l2CodecH265Dec * self,
     { }, /* ENTRY_POINT_OFFSETS */
     { }, /* EXT_SPS_ST_RPS */
     { }, /* EXT_SPS_LT_RPS */
+    { }, /* EXT_PPS_RANGE */
   };
   /* *INDENT-ON* */
 
@@ -1535,6 +1588,13 @@ gst_v4l2_codec_h265_dec_submit_bitstream (GstV4l2CodecH265Dec * self,
     control[num_controls].ptr = &self->pps;
     control[num_controls].size = sizeof (self->pps);
     num_controls++;
+
+    if (self->support_pps_range) {
+      control[num_controls].id = V4L2_CID_STATELESS_HEVC_EXT_PPS_RANGE;
+      control[num_controls].ptr = &self->pps_range;
+      control[num_controls].size = sizeof (self->pps_range);
+      num_controls++;
+    }
 
     if (self->support_scaling_matrix) {
       control[num_controls].id = V4L2_CID_STATELESS_HEVC_SCALING_MATRIX;
