@@ -442,6 +442,34 @@ gst_va_h264_dec_start_picture (GstH264Decoder * decoder,
       _init_vaapi_pic (&pic_param.ReferenceFrames[ref_frame_idx]);
   }
 
+  if (base->profile == VAProfileH264High444) {
+    /* VAProfileH264High444 takes the lossless flag and all six 8x8
+     * scaling lists, in the extension buffers. */
+    VAPictureParameterBufferH264Extension pic_ext = {
+      .base = pic_param,
+      .ext_fields.bits.qpprime_y_zero_transform_bypass_flag =
+          sps->qpprime_y_zero_transform_bypass_flag,
+    };
+    VAIQMatrixBufferH264Extension iq_ext = { 0, };
+
+    if (!gst_va_decoder_add_param_buffer (base->decoder, va_pic,
+            VAPictureParameterBufferType, &pic_ext, sizeof (pic_ext)))
+      return GST_FLOW_ERROR;
+
+    for (i = 0; i < 6; i++) {
+      gst_h264_quant_matrix_4x4_get_raster_from_zigzag (iq_ext.ScalingList4x4
+          [i], pps->scaling_lists_4x4[i]);
+      gst_h264_quant_matrix_8x8_get_raster_from_zigzag (iq_ext.ScalingList8x8
+          [i], pps->scaling_lists_8x8[i]);
+    }
+
+    if (!gst_va_decoder_add_param_buffer (base->decoder, va_pic,
+            VAIQMatrixBufferType, &iq_ext, sizeof (iq_ext)))
+      return GST_FLOW_ERROR;
+
+    return GST_FLOW_OK;
+  }
+
   if (!gst_va_decoder_add_param_buffer (base->decoder, va_pic,
           VAPictureParameterBufferType, &pic_param, sizeof (pic_param)))
     return GST_FLOW_ERROR;
@@ -574,9 +602,10 @@ static const struct
   P (MAIN, Main),
   /* P (EXTENDED, ), */
   P (HIGH, High),
-  /* P (HIGH10, ), */
-  /* P (HIGH_422, ), */
-  /* P (HIGH_444, ), */
+  P (HIGH10, High10),
+  P (HIGH_422, High422),
+  /* libva kalium/avd: with the H.264 extension buffers */
+  P (HIGH_444, High444),
   P (MULTIVIEW_HIGH, MultiviewHigh),
   P (STEREO_HIGH, StereoHigh),
   /* P (SCALABLE_BASELINE, ), */

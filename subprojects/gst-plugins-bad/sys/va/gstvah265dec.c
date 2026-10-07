@@ -399,13 +399,13 @@ _fill_pred_weight_table (GstVaH265Dec * self, GstH265SliceHdr * header,
           >> chroma_log2_weight_denom);
 
       /* 7-56 */
-      slice_param->base.ChromaOffsetL0[i][j] = CLAMP (chroma_offset,
+      chroma_offset = CLAMP (chroma_offset,
           -self->WpOffsetHalfRangeC, self->WpOffsetHalfRangeC - 1);
+      slice_param->base.ChromaOffsetL0[i][j] = chroma_offset;
 
-      if (is_rext) {
-        slice_param->rext.ChromaOffsetL0[i][j] =
-            slice_param->base.ChromaOffsetL0[i][j];
-      }
+      /* With high_precision_offsets_enabled_flag the offset needs 16 bits. */
+      if (is_rext)
+        slice_param->rext.ChromaOffsetL0[i][j] = chroma_offset;
     }
   }
 
@@ -449,13 +449,13 @@ _fill_pred_weight_table (GstVaH265Dec * self, GstH265SliceHdr * header,
           >> chroma_log2_weight_denom);
 
       /* 7-56 */
-      slice_param->base.ChromaOffsetL1[i][j] = CLAMP (chroma_offset,
+      chroma_offset = CLAMP (chroma_offset,
           -self->WpOffsetHalfRangeC, self->WpOffsetHalfRangeC - 1);
+      slice_param->base.ChromaOffsetL1[i][j] = chroma_offset;
 
-      if (is_rext) {
-        slice_param->rext.ChromaOffsetL1[i][j] =
-            slice_param->base.ChromaOffsetL1[i][j];
-      }
+      /* With high_precision_offsets_enabled_flag the offset needs 16 bits. */
+      if (is_rext)
+        slice_param->rext.ChromaOffsetL1[i][j] = chroma_offset;
     }
   }
 }
@@ -933,9 +933,10 @@ static const struct
   P (MAIN, Main),
   P (MAIN_10, Main10),
   P (MAIN_STILL_PICTURE, Main),
-  /*P (MONOCHROME, ),
-  P (MONOCHROME_12, ),
-  P (MONOCHROME_16, ),*/
+  /* Monochrome decodes as 4:2:0 of its bit depth. */
+  P (MONOCHROME, Main),
+  P (MONOCHROME_12, Main12),
+  /*P (MONOCHROME_16, ),*/
   P (MAIN_12, Main12),
   P (MAIN_422_10, Main422_10),
   P (MAIN_422_12, Main422_12),
@@ -944,19 +945,21 @@ static const struct
   P (MAIN_444_12, Main444_12),
   P (MAIN_INTRA, Main),
   P (MAIN_10_INTRA, Main10),
-  /*P (MAIN_12_INTRA, ),
-  P (MAIN_422_10_INTRA, ),
-  P (MAIN_422_12_INTRA, ),
-  P (MAIN_444_INTRA, ),
-  P (MAIN_444_10_INTRA, ),
-  P (MAIN_444_12_INTRA, ),
-  P (MAIN_444_16_INTRA, ),
-  P (MAIN_444_STILL_PICTURE, ),
-  P (MAIN_444_16_STILL_PICTURE, ),
-  P (MONOCHROME_10, ),
-  P (HIGH_THROUGHPUT_444, ),
-  P (HIGH_THROUGHPUT_444_10, ),
-  P (HIGH_THROUGHPUT_444_14, ),
+  /* The other RExt profiles by chroma format and bit depth, for drivers
+   * that decode every RExt tool. */
+  P (MAIN_12_INTRA, Main12),
+  P (MAIN_422_10_INTRA, Main422_10),
+  P (MAIN_422_12_INTRA, Main422_12),
+  P (MAIN_444_INTRA, Main444),
+  P (MAIN_444_10_INTRA, Main444_10),
+  P (MAIN_444_12_INTRA, Main444_12),
+  /*P (MAIN_444_16_INTRA, ),*/
+  P (MAIN_444_STILL_PICTURE, Main444),
+  /*P (MAIN_444_16_STILL_PICTURE, ),*/
+  P (MONOCHROME_10, Main10),
+  P (HIGH_THROUGHPUT_444, Main444),
+  P (HIGH_THROUGHPUT_444_10, Main444_10),
+  /*P (HIGH_THROUGHPUT_444_14, ),
   P (HIGH_THROUGHPUT_444_16_INTRA, ),*/
   P (SCREEN_EXTENDED_MAIN, SccMain),
   P (SCREEN_EXTENDED_MAIN_10, SccMain10),

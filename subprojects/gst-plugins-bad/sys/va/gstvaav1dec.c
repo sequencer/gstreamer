@@ -162,6 +162,9 @@ _get_profile (GstVaAV1Dec * self, const GstAV1SequenceHeaderOBU * seq_hdr)
     case GST_AV1_PROFILE_1:
       profile = VAProfileAV1Profile1;
       break;
+    case GST_AV1_PROFILE_2:
+      profile = VAProfileAV1Profile2;
+      break;
     default:
       GST_ERROR_OBJECT (self, "Unsupported av1 profile value %d",
           seq_hdr->seq_profile);
@@ -203,6 +206,19 @@ _get_rtformat (GstVaAV1Dec * self, VAProfile profile,
         return VA_RT_FORMAT_YUV444;
       } else if (seq_header->bit_depth == 10) {
         return VA_RT_FORMAT_YUV444_10;
+      }
+      break;
+    case VAProfileAV1Profile2:
+      /* 12-bit 4:2:0 and monochrome; 4:2:2 at 8 and 10 bits. */
+      if (seq_header->bit_depth == 12) {
+        if (seq_header->color_config.mono_chrome
+            || (seq_header->color_config.subsampling_x
+                && seq_header->color_config.subsampling_y))
+          return VA_RT_FORMAT_YUV420_12;
+      } else if (seq_header->color_config.subsampling_x
+          && !seq_header->color_config.subsampling_y) {
+        return seq_header->bit_depth == 8 ? VA_RT_FORMAT_YUV422 :
+            VA_RT_FORMAT_YUV422_10;
       }
       break;
     default:
