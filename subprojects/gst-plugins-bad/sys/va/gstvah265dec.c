@@ -1028,7 +1028,7 @@ _get_profile (GstVaH265Dec * self, const GstH265SPS * sps, gint max_dpb_size)
     }
   }
 
-  /* 3. The RExt VA profile of the stream's chroma format and bit depth, for
+  /* 3. A RExt VA profile for the stream's chroma format and bit depth, for
      profiles VA has no counterpart of (Main 4:4:4 16 Intra, High Throughput
      4:4:4 14, ...) whose streams stay within 12 bits. */
   {
@@ -1039,9 +1039,9 @@ _get_profile (GstVaH265Dec * self, const GstH265SPS * sps, gint max_dpb_size)
     switch (sps->chroma_format_idc) {
       case 0:
       case 1:
-        by_format = depth <= 8 ? VAProfileHEVCMain : depth <= 10 ?
-            VAProfileHEVCMain10 : depth <= 12 ? VAProfileHEVCMain12 :
-            VAProfileNone;
+        /* A RExt VA profile, so the range extension buffers carry the
+         * tools these profiles allow. */
+        by_format = depth <= 12 ? VAProfileHEVCMain12 : VAProfileNone;
         break;
       case 2:
         by_format = depth <= 10 ? VAProfileHEVCMain422_10 : depth <= 12 ?
