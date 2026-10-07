@@ -108,7 +108,9 @@ static const struct ProfileMap
       "high-throughput-444-10 }"),
   Q (HEVC, Main444_12, "main-444-12", "video/x-h265",
       "profile = (string) main-444-12",
-      "profile = (string) { main-444-12, main-444-12-intra }"),
+      "profile = (string) { main-444-12, main-444-12-intra, "
+      "main-444-16-intra, main-444-16-still-picture, high-throughput-444-14, "
+      "high-throughput-444-16-intra, monochrome-16 }"),
   P (HEVC, SccMain, "screen-extended-main", "video/x-h265",
       "profile = (string) screen-extended-main"),
   P (HEVC, SccMain10, "screen-extended-main-10", "video/x-h265",

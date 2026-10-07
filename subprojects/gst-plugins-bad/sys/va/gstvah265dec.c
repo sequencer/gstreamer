@@ -1028,6 +1028,35 @@ _get_profile (GstVaH265Dec * self, const GstH265SPS * sps, gint max_dpb_size)
     }
   }
 
+  /* 3. The RExt VA profile of the stream's chroma format and bit depth, for
+     profiles VA has no counterpart of (Main 4:4:4 16 Intra, High Throughput
+     4:4:4 14, ...) whose streams stay within 12 bits. */
+  {
+    guint depth = MAX (sps->bit_depth_luma_minus8, sps->bit_depth_chroma_minus8)
+        + 8;
+    VAProfile by_format = VAProfileNone;
+
+    switch (sps->chroma_format_idc) {
+      case 0:
+      case 1:
+        by_format = depth <= 8 ? VAProfileHEVCMain : depth <= 10 ?
+            VAProfileHEVCMain10 : depth <= 12 ? VAProfileHEVCMain12 :
+            VAProfileNone;
+        break;
+      case 2:
+        by_format = depth <= 10 ? VAProfileHEVCMain422_10 : depth <= 12 ?
+            VAProfileHEVCMain422_12 : VAProfileNone;
+        break;
+      case 3:
+        by_format = depth <= 8 ? VAProfileHEVCMain444 : depth <= 10 ?
+            VAProfileHEVCMain444_10 : depth <= 12 ? VAProfileHEVCMain444_12 :
+            VAProfileNone;
+        break;
+    }
+    if (by_format != VAProfileNone && i < G_N_ELEMENTS (profiles))
+      profiles[i++] = by_format;
+  }
+
   for (j = 0; j < i && j < G_N_ELEMENTS (profiles); j++) {
     if (gst_va_decoder_has_profile (base->decoder, profiles[j]))
       return profiles[j];
