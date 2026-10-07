@@ -43,6 +43,7 @@
 
 #include "gstv4l2codecallocator.h"
 #include "gstv4l2codecav1dec.h"
+#include "gstv4l2codecav1grain.h"
 #include "gstv4l2codecpool.h"
 #include "gstv4l2format.h"
 #include "linux/v4l2-controls.h"
@@ -112,6 +113,7 @@ struct _GstV4l2CodecAV1Dec
   gint render_width;
   gint render_height;
   guint bit_depth;
+  gboolean matrix_identity;
   guint profile;
   guint16 operating_point_idc;
 
@@ -596,6 +598,9 @@ static void
 gst_v4l2_codec_av1_dec_fill_sequence_params (GstV4l2CodecAV1Dec * self,
     const GstAV1SequenceHeaderOBU * seq_hdr)
 {
+  self->matrix_identity =
+      seq_hdr->color_config.matrix_coefficients == GST_AV1_MC_IDENTITY;
+
   /* *INDENT-OFF* */
   self->v4l2_sequence = (struct v4l2_ctrl_av1_sequence) {
     .flags =
@@ -1470,6 +1475,53 @@ fail:
   return FALSE;
 }
 
+/* Drivers without V4L2_CID_STATELESS_AV1_FILM_GRAIN output the picture
+ * without the grain: add it to a copy, the decoded picture stays the
+ * reference. */
+static gboolean
+gst_v4l2_codec_av1_dec_grain_output_buffer (GstV4l2CodecAV1Dec * self,
+    GstVideoCodecFrame * codec_frame, const GstAV1FilmGrainParams * fg)
+{
+  GstVideoFrame src_frame;
+  GstVideoFrame dest_frame;
+  GstVideoInfo dest_vinfo;
+  GstBuffer *buffer;
+
+  gst_video_info_set_format (&dest_vinfo,
+      GST_VIDEO_INFO_FORMAT (&self->vinfo_drm.vinfo), self->render_width,
+      self->render_height);
+
+  buffer = gst_video_decoder_allocate_output_buffer (GST_VIDEO_DECODER (self));
+  if (!buffer)
+    goto fail;
+
+  if (!gst_video_frame_map (&src_frame, &self->vinfo_drm.vinfo,
+          codec_frame->output_buffer, GST_MAP_READ)) {
+    gst_buffer_unref (buffer);
+    goto fail;
+  }
+
+  if (!gst_video_frame_map (&dest_frame, &dest_vinfo, buffer, GST_MAP_WRITE)) {
+    gst_video_frame_unmap (&src_frame);
+    gst_buffer_unref (buffer);
+    goto fail;
+  }
+
+  gst_v4l2_codec_av1_apply_film_grain (fg, self->bit_depth,
+      self->matrix_identity, &src_frame, &dest_frame);
+
+  gst_video_frame_unmap (&src_frame);
+  gst_video_frame_unmap (&dest_frame);
+  gst_buffer_replace (&codec_frame->output_buffer, buffer);
+  gst_buffer_unref (buffer);
+
+  return TRUE;
+
+fail:
+  GST_ERROR_OBJECT (self, "Failed to apply the film grain.");
+  return FALSE;
+}
+
 static GstFlowReturn
 gst_v4l2_codec_av1_dec_output_picture (GstAV1Decoder * decoder,
     GstVideoCodecFrame * frame, GstAV1Picture * picture)
@@ -1532,8 +1584,16 @@ gst_v4l2_codec_av1_dec_output_picture (GstAV1Decoder * decoder,
     goto error;
   }
 
-  if (self->copy_frames)
+  if (!self->fill_film_grain
+      && picture->frame_hdr.film_grain_params.apply_grain
+      && gst_v4l2_codec_av1_format_has_grain (GST_VIDEO_INFO_FORMAT
+          (&self->vinfo_drm.vinfo))) {
+    if (!gst_v4l2_codec_av1_dec_grain_output_buffer (self, frame,
+            &picture->frame_hdr.film_grain_params))
+      goto error;
+  } else if (self->copy_frames) {
     gst_v4l2_codec_av1_dec_copy_output_buffer (self, frame);
+  }
 
   gst_av1_picture_unref (picture);
 
