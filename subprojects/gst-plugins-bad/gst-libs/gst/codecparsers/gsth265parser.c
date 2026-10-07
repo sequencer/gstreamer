@@ -961,6 +961,12 @@ gst_h265_slice_parse_pred_weight_table (GstH265SliceHdr * slice, NalReader * nr)
   gint i, j;
   GstH265PPS *pps = slice->pps;
   GstH265SPS *sps = pps->sps;
+  /* WpOffsetHalfRangeY/C (7-36, 7-37): the offsets span the bit depth with
+   * high_precision_offsets_enabled_flag */
+  gboolean high_precision = sps->sps_range_extension_flag &&
+      sps->sps_extension_params.high_precision_offsets_enabled_flag;
+  gint half_y = high_precision ? 1 << (sps->bit_depth_luma_minus8 + 7) : 128;
+  gint half_c = high_precision ? 1 << (sps->bit_depth_chroma_minus8 + 7) : 128;
 
   GST_DEBUG ("parsing \"Prediction weight table\"");
 
@@ -983,12 +989,13 @@ gst_h265_slice_parse_pred_weight_table (GstH265SliceHdr * slice, NalReader * nr)
   for (i = 0; i <= slice->num_ref_idx_l0_active_minus1; i++) {
     if (p->luma_weight_l0_flag[i]) {
       READ_SE_ALLOWED (nr, p->delta_luma_weight_l0[i], -128, 127);
-      READ_SE_ALLOWED (nr, p->luma_offset_l0[i], -128, 127);
+      READ_SE_ALLOWED (nr, p->luma_offset_l0[i], -half_y, half_y - 1);
     }
     if (p->chroma_weight_l0_flag[i])
       for (j = 0; j < 2; j++) {
         READ_SE_ALLOWED (nr, p->delta_chroma_weight_l0[i][j], -128, 127);
-        READ_SE_ALLOWED (nr, p->delta_chroma_offset_l0[i][j], -512, 511);
+        READ_SE_ALLOWED (nr, p->delta_chroma_offset_l0[i][j],
+            -4 * half_c, 4 * half_c - 1);
       }
   }
 
@@ -1002,12 +1009,13 @@ gst_h265_slice_parse_pred_weight_table (GstH265SliceHdr * slice, NalReader * nr)
     for (i = 0; i <= slice->num_ref_idx_l1_active_minus1; i++) {
       if (p->luma_weight_l1_flag[i]) {
         READ_SE_ALLOWED (nr, p->delta_luma_weight_l1[i], -128, 127);
-        READ_SE_ALLOWED (nr, p->luma_offset_l1[i], -128, 127);
+        READ_SE_ALLOWED (nr, p->luma_offset_l1[i], -half_y, half_y - 1);
       }
       if (p->chroma_weight_l1_flag[i])
         for (j = 0; j < 2; j++) {
           READ_SE_ALLOWED (nr, p->delta_chroma_weight_l1[i][j], -128, 127);
-          READ_SE_ALLOWED (nr, p->delta_chroma_offset_l1[i][j], -512, 511);
+          READ_SE_ALLOWED (nr, p->delta_chroma_offset_l1[i][j],
+            -4 * half_c, 4 * half_c - 1);
         }
     }
   }

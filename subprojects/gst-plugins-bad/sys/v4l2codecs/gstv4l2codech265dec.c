@@ -121,6 +121,7 @@ struct _GstV4l2CodecH265Dec
   GArray *ext_sps_st_rps;
   GArray *ext_sps_lt_rps;
   GArray *slice_params;
+  GArray *wp_offsets;
   GArray *entry_point_offsets;
 
   enum v4l2_stateless_hevc_decode_mode decode_mode;
@@ -134,6 +135,7 @@ struct _GstV4l2CodecH265Dec
   gboolean support_entry_point_offsets;
   gboolean support_long_short_term_rps;
   gboolean support_pps_range;
+  gboolean support_wp_offsets;
 
   GstVideoConverter *convert;
   gboolean need_crop;
@@ -212,6 +214,10 @@ gst_v4l2_decoder_h265_api_check (GstV4l2Decoder * decoder)
     }, {
       SET_ID (V4L2_CID_STATELESS_HEVC_EXT_PPS_RANGE),
       .size = sizeof(struct v4l2_ctrl_hevc_ext_pps_range),
+      .optional = TRUE,
+    }, {
+      SET_ID (V4L2_CID_STATELESS_HEVC_EXT_PRED_WEIGHT_OFFSETS),
+      .size = sizeof(struct v4l2_ctrl_hevc_ext_pred_weight_offsets),
       .optional = TRUE,
     }
   };
@@ -312,6 +318,10 @@ gst_v4l2_codec_h265_dec_open (GstVideoDecoder * decoder)
   self->support_pps_range =
       gst_v4l2_decoder_query_control_size (self->decoder,
       V4L2_CID_STATELESS_HEVC_EXT_PPS_RANGE, NULL);
+
+  self->support_wp_offsets =
+      gst_v4l2_decoder_query_control_size (self->decoder,
+      V4L2_CID_STATELESS_HEVC_EXT_PRED_WEIGHT_OFFSETS, NULL);
 
   self->decode_mode = control[0].value;
   self->start_code = control[1].value;
@@ -817,6 +827,13 @@ get_slice_header_byte_offset (GstH265Slice * slice)
   return nal_header_bytes + (slice->header.header_size + 7) / 8 - epb_count;
 }
 
+static gboolean
+is_high_precision_offsets (const GstH265SPS * sps)
+{
+  return sps->sps_range_extension_flag &&
+      sps->sps_extension_params.high_precision_offsets_enabled_flag;
+}
+
 static void
 gst_v4l2_codec_h265_dec_fill_slice_params (GstV4l2CodecH265Dec * self,
     GstH265Slice * slice, GstH265Picture * picture)
@@ -827,14 +844,21 @@ gst_v4l2_codec_h265_dec_fill_slice_params (GstV4l2CodecH265Dec * self,
   gsize slice_size = slice->nalu.size;
   gsize sc_offset = 0;
   struct v4l2_ctrl_hevc_slice_params *params;
+  struct v4l2_ctrl_hevc_ext_pred_weight_offsets *offsets;
   gint i, j;
   gint chroma_weight, chroma_log2_weight_denom;
-  /* TODO adjust this if sps_ext is later supported */
-  const gint32 WpOffsetHalfRangeC = 1 << 7;
+  /* WpOffsetHalfRangeC (7-37) */
+  const gint32 WpOffsetHalfRangeC = is_high_precision_offsets (pps->sps) ?
+      1 << (pps->sps->bit_depth_chroma_minus8 + 7) : 1 << 7;
 
   /* Ensure array is large enough */
   if (self->slice_params->len < self->num_slices)
     g_array_set_size (self->slice_params, self->slice_params->len * 2);
+  if (self->wp_offsets->len < self->num_slices)
+    g_array_set_size (self->wp_offsets, self->slice_params->len);
+  offsets = &g_array_index (self->wp_offsets,
+      struct v4l2_ctrl_hevc_ext_pred_weight_offsets, n);
+  memset (offsets, 0, sizeof (*offsets));
 
   if (needs_start_codes (self))
     sc_offset = 3;
@@ -907,6 +931,7 @@ gst_v4l2_codec_h265_dec_fill_slice_params (GstV4l2CodecH265Dec * self,
         slice_hdr->pred_weight_table.delta_luma_weight_l0[i];
     params->pred_weight_table.luma_offset_l0[i] =
         slice_hdr->pred_weight_table.luma_offset_l0[i];
+    offsets->luma_offset_l0[i] = slice_hdr->pred_weight_table.luma_offset_l0[i];
   }
 
   chroma_log2_weight_denom =
@@ -936,6 +961,8 @@ gst_v4l2_codec_h265_dec_fill_slice_params (GstV4l2CodecH265Dec * self,
         /* 7-56 */
         params->pred_weight_table.chroma_offset_l0[i][j] =
             CLAMP (chroma_offset, -WpOffsetHalfRangeC, WpOffsetHalfRangeC - 1);
+        offsets->chroma_offset_l0[i][j] =
+            CLAMP (chroma_offset, -WpOffsetHalfRangeC, WpOffsetHalfRangeC - 1);
       }
     }
   }
@@ -952,6 +979,7 @@ gst_v4l2_codec_h265_dec_fill_slice_params (GstV4l2CodecH265Dec * self,
         slice_hdr->pred_weight_table.delta_luma_weight_l1[i];
     params->pred_weight_table.luma_offset_l1[i] =
         slice_hdr->pred_weight_table.luma_offset_l1[i];
+    offsets->luma_offset_l1[i] = slice_hdr->pred_weight_table.luma_offset_l1[i];
   }
 
   if (slice_hdr->pps->sps->chroma_array_type != 0) {
@@ -976,6 +1004,8 @@ gst_v4l2_codec_h265_dec_fill_slice_params (GstV4l2CodecH265Dec * self,
 
         /* 7-56 */
         params->pred_weight_table.chroma_offset_l1[i][j] =
+            CLAMP (chroma_offset, -WpOffsetHalfRangeC, WpOffsetHalfRangeC - 1);
+        offsets->chroma_offset_l1[i][j] =
             CLAMP (chroma_offset, -WpOffsetHalfRangeC, WpOffsetHalfRangeC - 1);
       }
     }
@@ -1537,6 +1567,7 @@ gst_v4l2_codec_h265_dec_submit_bitstream (GstV4l2CodecH265Dec * self,
     { }, /* EXT_SPS_ST_RPS */
     { }, /* EXT_SPS_LT_RPS */
     { }, /* EXT_PPS_RANGE */
+    { }, /* EXT_PRED_WEIGHT_OFFSETS */
   };
   /* *INDENT-ON* */
 
@@ -1637,6 +1668,15 @@ gst_v4l2_codec_h265_dec_submit_bitstream (GstV4l2CodecH265Dec * self,
     control[num_controls].size = g_array_get_element_size (self->slice_params)
         * self->num_slices;
     num_controls++;
+
+    if (self->support_wp_offsets &&
+        self->sps.flags & V4L2_HEVC_SPS_FLAG_HIGH_PRECISION_OFFSETS_ENABLED) {
+      control[num_controls].id = V4L2_CID_STATELESS_HEVC_EXT_PRED_WEIGHT_OFFSETS;
+      control[num_controls].ptr = self->wp_offsets->data;
+      control[num_controls].size =
+          g_array_get_element_size (self->wp_offsets) * self->num_slices;
+      num_controls++;
+    }
 
     if (self->support_entry_point_offsets && self->entry_point_offsets->len) {
       control[num_controls].id = V4L2_CID_STATELESS_HEVC_ENTRY_POINT_OFFSETS;
@@ -1859,6 +1899,9 @@ gst_v4l2_codec_h265_dec_init (GstV4l2CodecH265Dec * self,
   self->slice_params = g_array_sized_new (FALSE, TRUE,
       sizeof (struct v4l2_ctrl_hevc_slice_params), 4);
   g_array_set_size (self->slice_params, 4);
+  self->wp_offsets = g_array_sized_new (FALSE, TRUE,
+      sizeof (struct v4l2_ctrl_hevc_ext_pred_weight_offsets), 4);
+  g_array_set_size (self->wp_offsets, 4);
   self->entry_point_offsets = g_array_sized_new (FALSE, TRUE,
       sizeof (guint32), 4);
   self->ext_sps_st_rps = g_array_sized_new (FALSE, TRUE,
@@ -1878,6 +1921,7 @@ gst_v4l2_codec_h265_dec_dispose (GObject * object)
   g_clear_pointer (&self->ext_sps_st_rps, g_array_unref);
   g_clear_pointer (&self->ext_sps_lt_rps, g_array_unref);
   g_clear_pointer (&self->slice_params, g_array_unref);
+  g_clear_pointer (&self->wp_offsets, g_array_unref);
   g_clear_pointer (&self->entry_point_offsets, g_array_unref);
 
   G_OBJECT_CLASS (parent_class)->dispose (object);

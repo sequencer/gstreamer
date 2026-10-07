@@ -1401,14 +1401,14 @@ struct _GstH265PredWeightTable
   guint8 luma_weight_l0_flag[15];
   guint8  chroma_weight_l0_flag[15];
   gint8 delta_luma_weight_l0[15];
-  gint8 luma_offset_l0[15];
+  gint16 luma_offset_l0[15];
   gint8 delta_chroma_weight_l0 [15][2];
   gint16 delta_chroma_offset_l0 [15][2];
 
   guint8 luma_weight_l1_flag[15];
   guint8 chroma_weight_l1_flag[15];
   gint8 delta_luma_weight_l1[15];
-  gint8 luma_offset_l1[15];
+  gint16 luma_offset_l1[15];
   gint8 delta_chroma_weight_l1[15][2];
   gint16 delta_chroma_offset_l1[15][2];
 };
